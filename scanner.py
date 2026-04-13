@@ -2,7 +2,7 @@
 Name: YOUR NAME
 Roll No: YOUR ROLL NO
 Course: Image Processing & Computer Vision
-Assignment: Noise Modeling and Image Restoration
+Assignment: Medical Image Compression & Segmentation
 """
 
 import cv2
@@ -10,152 +10,143 @@ import numpy as np
 import os
 
 # Utility Functions
+
 def create_output_folder():
     if not os.path.exists("outputs"):
         os.makedirs("outputs")
+        print("✔ 'outputs/' folder created")
 
 
 def load_image(path):
     if not os.path.exists(path):
-        raise Exception(f"❌ Image not found at path: {path}")
+        raise Exception(f"❌ Image not found at: {path}")
 
-    img = cv2.imread(path)
+    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
 
     if img is None:
-        raise Exception("❌ Error reading image! Check format.")
+        raise Exception("❌ Error loading image!")
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    return gray
+    return img
 
-# Noise Functions
+# Task 1: RLE Compression
 
-def add_gaussian_noise(image, mean=0, var=0.01):
-    sigma = var ** 0.5
-    gaussian = np.random.normal(mean, sigma, image.shape)
-    noisy = image + gaussian * 255
-    noisy = np.clip(noisy, 0, 255).astype(np.uint8)
-    return noisy
+def rle_encode(image):
+    pixels = image.flatten()
+    encoding = []
 
+    prev = pixels[0]
+    count = 1
 
-def add_salt_pepper_noise(image, prob=0.02):
-    noisy = np.copy(image)
+    for pixel in pixels[1:]:
+        if pixel == prev:
+            count += 1
+        else:
+            encoding.append((prev, count))
+            prev = pixel
+            count = 1
 
-    # Salt
-    salt = np.random.rand(*image.shape) < prob / 2
-    noisy[salt] = 255
-
-    # Pepper
-    pepper = np.random.rand(*image.shape) < prob / 2
-    noisy[pepper] = 0
-
-    return noisy
+    encoding.append((prev, count))
+    return encoding
 
 
-# Filters
+def compression_stats(original, encoded):
+    original_size = original.size
+    encoded_size = len(encoded) * 2  # (value, count)
 
-def mean_filter(image):
-    return cv2.blur(image, (5, 5))
+    ratio = original_size / encoded_size
+    savings = (1 - encoded_size / original_size) * 100
 
+    return ratio, savings
 
-def median_filter(image):
-    return cv2.medianBlur(image, 5)
+# Task 2: Segmentation
 
-
-def gaussian_filter(image):
-    return cv2.GaussianBlur(image, (5, 5), 0)
-
-# Metrics
-
-def mse(original, restored):
-    return np.mean((original - restored) ** 2)
+def global_threshold(image):
+    _, thresh = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)
+    return thresh
 
 
-def psnr(original, restored):
-    mse_val = mse(original, restored)
-    if mse_val == 0:
-        return 100
-    PIXEL_MAX = 255.0
-    return 20 * np.log10(PIXEL_MAX / np.sqrt(mse_val))
+def otsu_threshold(image):
+    _, thresh = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return thresh
 
-# Processing Pipeline
+# Task 3: Morphology
+
+def morphology(image):
+    kernel = np.ones((3, 3), np.uint8)
+
+    dilation = cv2.dilate(image, kernel, iterations=1)
+    erosion = cv2.erode(image, kernel, iterations=1)
+
+    return dilation, erosion
+
+# Main Pipeline
 
 def process_image(image_path):
     print("\n--- Processing Image ---")
 
     img = load_image(image_path)
     cv2.imwrite("outputs/original.png", img)
+    print("✔ Image loaded")
 
-    print("✔ Original image loaded")
+    # ---------- Compression ----------
+    print("\n--- Compression (RLE) ---")
 
-    # Add noise
-    gaussian_noisy = add_gaussian_noise(img)
-    sp_noisy = add_salt_pepper_noise(img)
+    encoded = rle_encode(img)
+    ratio, savings = compression_stats(img, encoded)
 
-    cv2.imwrite("outputs/gaussian_noise.png", gaussian_noisy)
-    cv2.imwrite("outputs/salt_pepper_noise.png", sp_noisy)
+    print(f"Compression Ratio: {ratio:.2f}")
+    print(f"Storage Savings: {savings:.2f}%")
 
-    print("✔ Noise added")
+    # Save RLE output (partial for readability)
+    with open("outputs/rle.txt", "w") as f:
+        for val, count in encoded[:1000]:
+            f.write(f"{val}:{count} ")
 
-    # Apply filters
-    results = {}
+    print("✔ RLE saved")
 
-    for name, noisy_img in {
-        "Gaussian": gaussian_noisy,
-        "SaltPepper": sp_noisy
-    }.items():
+    # ---------- Segmentation ----------
+    print("\n--- Segmentation ---")
 
-        print(f"\n--- Restoring {name} Noise ---")
+    global_seg = global_threshold(img)
+    otsu_seg = otsu_threshold(img)
 
-        mean_img = mean_filter(noisy_img)
-        median_img = median_filter(noisy_img)
-        gaussian_img = gaussian_filter(noisy_img)
+    cv2.imwrite("outputs/global_threshold.png", global_seg)
+    cv2.imwrite("outputs/otsu_threshold.png", otsu_seg)
 
-        # Save images
-        cv2.imwrite(f"outputs/{name}_mean.png", mean_img)
-        cv2.imwrite(f"outputs/{name}_median.png", median_img)
-        cv2.imwrite(f"outputs/{name}_gaussian.png", gaussian_img)
+    print("✔ Segmentation done")
 
-        # Metrics
-        results[name] = {
-            "Mean": (mse(img, mean_img), psnr(img, mean_img)),
-            "Median": (mse(img, median_img), psnr(img, median_img)),
-            "Gaussian": (mse(img, gaussian_img), psnr(img, gaussian_img))
-        }
+    # ---------- Morphology ----------
+    print("\n--- Morphological Processing ---")
 
-    return results
+    g_dil, g_ero = morphology(global_seg)
+    o_dil, o_ero = morphology(otsu_seg)
 
-# Analysis
+    cv2.imwrite("outputs/global_dilation.png", g_dil)
+    cv2.imwrite("outputs/global_erosion.png", g_ero)
+    cv2.imwrite("outputs/otsu_dilation.png", o_dil)
+    cv2.imwrite("outputs/otsu_erosion.png", o_ero)
 
-def print_analysis(results):
-    print("\n========== PERFORMANCE ANALYSIS ==========\n")
+    print("✔ Morphology done")
 
-    for noise_type, filters in results.items():
-        print(f"\nNoise Type: {noise_type}")
-
-        best_psnr = 0
-        best_filter = ""
-
-        for filter_name, (mse_val, psnr_val) in filters.items():
-            print(f"{filter_name} Filter -> MSE: {mse_val:.2f}, PSNR: {psnr_val:.2f}")
-
-            if psnr_val > best_psnr:
-                best_psnr = psnr_val
-                best_filter = filter_name
-
-        print(f"👉 Best Filter: {best_filter}")
-
+    return ratio, savings
 
 # MAIN
 
 if __name__ == "__main__":
+    print("🚀 Script started")
+
     create_output_folder()
 
-    # ✅ YOUR IMAGE NAME FIXED HERE
+    # ✅ IMPORTANT: your image name
     image_path = "image.jpg"
 
     try:
-        results = process_image(image_path)
-        print_analysis(results)
+        ratio, savings = process_image(image_path)
+
+        print("\n FINAL RESULTS ")
+        print(f"Compression Ratio: {ratio:.2f}")
+        print(f"Storage Savings: {savings:.2f}%")
+
         print("\n✔ All outputs saved in 'outputs/' folder")
 
     except Exception as e:
