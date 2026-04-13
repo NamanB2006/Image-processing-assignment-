@@ -1,126 +1,162 @@
+"""
+Name: YOUR NAME
+Roll No: YOUR ROLL NO
+Course: Image Processing & Computer Vision
+Assignment: Noise Modeling and Image Restoration
+"""
+
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 import os
 
-# Create output folder
-if not os.path.exists("outputs"):
-    os.makedirs("outputs")
+# Utility Functions
+def create_output_folder():
+    if not os.path.exists("outputs"):
+        os.makedirs("outputs")
 
 
-print("Smart Document Scanner & Analysis System")
+def load_image(path):
+    if not os.path.exists(path):
+        raise Exception(f"❌ Image not found at path: {path}")
 
-# Task 2: Image Acquisition
-image_path = input("Enter path of document image: ")
+    img = cv2.imread(path)
 
-image = cv2.imread(image_path)
+    if img is None:
+        raise Exception("❌ Error reading image! Check format.")
 
-if image is None:
-    print("Error loading image. Check path.")
-    exit()
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    return gray
 
-# Resize to 512x512
-image = cv2.resize(image, (512, 512))
+# Noise Functions
 
-# Convert to grayscale
-gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+def add_gaussian_noise(image, mean=0, var=0.01):
+    sigma = var ** 0.5
+    gaussian = np.random.normal(mean, sigma, image.shape)
+    noisy = image + gaussian * 255
+    noisy = np.clip(noisy, 0, 255).astype(np.uint8)
+    return noisy
 
-# Save outputs
-cv2.imwrite("outputs/original.png", image)
-cv2.imwrite("outputs/grayscale.png", gray)
 
-print(" Image loaded and converted to grayscale.\n")
+def add_salt_pepper_noise(image, prob=0.02):
+    noisy = np.copy(image)
 
-# Task 3: Sampling
-def downsample(img, size):
-    return cv2.resize(img, (size, size))
+    # Salt
+    salt = np.random.rand(*image.shape) < prob / 2
+    noisy[salt] = 255
 
-# Different resolutions
-high_res = gray
-medium_res = downsample(gray, 256)
-low_res = downsample(gray, 128)
+    # Pepper
+    pepper = np.random.rand(*image.shape) < prob / 2
+    noisy[pepper] = 0
 
-# Upscale back for visualization
-medium_up = cv2.resize(medium_res, (512, 512))
-low_up = cv2.resize(low_res, (512, 512))
+    return noisy
 
-# Save images
-cv2.imwrite("outputs/high_res.png", high_res)
-cv2.imwrite("outputs/medium_res.png", medium_up)
-cv2.imwrite("outputs/low_res.png", low_up)
 
-print(" Sampling (resolution changes) completed.\n")
+# Filters
 
-# Task 4: Quantization
-def quantize(img, levels):
-    factor = 256 // levels
-    return (img // factor) * factor
+def mean_filter(image):
+    return cv2.blur(image, (5, 5))
 
-quant_256 = gray  # 8-bit
-quant_16 = quantize(gray, 16)
-quant_4 = quantize(gray, 4)
 
-# Save images
-cv2.imwrite("outputs/quant_256.png", quant_256)
-cv2.imwrite("outputs/quant_16.png", quant_16)
-cv2.imwrite("outputs/quant_4.png", quant_4)
+def median_filter(image):
+    return cv2.medianBlur(image, 5)
 
-print(" Quantization completed.\n")
 
-# Task 5: Visualization
-plt.figure(figsize=(12, 8))
+def gaussian_filter(image):
+    return cv2.GaussianBlur(image, (5, 5), 0)
 
-# Row 1: Original + Sampling
-plt.subplot(2, 4, 1)
-plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-plt.title("Original")
-plt.axis("off")
+# Metrics
 
-plt.subplot(2, 4, 2)
-plt.imshow(high_res, cmap='gray')
-plt.title("512x512")
-plt.axis("off")
+def mse(original, restored):
+    return np.mean((original - restored) ** 2)
 
-plt.subplot(2, 4, 3)
-plt.imshow(medium_up, cmap='gray')
-plt.title("256x256")
-plt.axis("off")
 
-plt.subplot(2, 4, 4)
-plt.imshow(low_up, cmap='gray')
-plt.title("128x128")
-plt.axis("off")
+def psnr(original, restored):
+    mse_val = mse(original, restored)
+    if mse_val == 0:
+        return 100
+    PIXEL_MAX = 255.0
+    return 20 * np.log10(PIXEL_MAX / np.sqrt(mse_val))
 
-# Row 2: Quantization
-plt.subplot(2, 4, 5)
-plt.imshow(quant_256, cmap='gray')
-plt.title("8-bit (256 levels)")
-plt.axis("off")
+# Processing Pipeline
 
-plt.subplot(2, 4, 6)
-plt.imshow(quant_16, cmap='gray')
-plt.title("4-bit (16 levels)")
-plt.axis("off")
+def process_image(image_path):
+    print("\n--- Processing Image ---")
 
-plt.subplot(2, 4, 7)
-plt.imshow(quant_4, cmap='gray')
-plt.title("2-bit (4 levels)")
-plt.axis("off")
+    img = load_image(image_path)
+    cv2.imwrite("outputs/original.png", img)
 
-plt.tight_layout()
-plt.savefig("outputs/comparison.png")
-plt.show()
+    print("✔ Original image loaded")
 
-print(" Comparison figure saved as outputs/comparison.png\n")
+    # Add noise
+    gaussian_noisy = add_gaussian_noise(img)
+    sp_noisy = add_salt_pepper_noise(img)
 
-# Observations (Printed)
-print(" Observations:")
-print("------------------------------------------")
-print("1. High resolution (512x512) retains maximum clarity.")
-print("2. Medium resolution (256x256) shows slight blur.")
-print("3. Low resolution (128x128) loses fine text details.")
-print("4. 8-bit quantization preserves full grayscale detail.")
-print("5. 4-bit shows visible banding and reduced smoothness.")
-print("6. 2-bit severely degrades readability.")
-print("7. OCR works best on high-res and high-bit images.")
-print("------------------------------------------")
+    cv2.imwrite("outputs/gaussian_noise.png", gaussian_noisy)
+    cv2.imwrite("outputs/salt_pepper_noise.png", sp_noisy)
+
+    print("✔ Noise added")
+
+    # Apply filters
+    results = {}
+
+    for name, noisy_img in {
+        "Gaussian": gaussian_noisy,
+        "SaltPepper": sp_noisy
+    }.items():
+
+        print(f"\n--- Restoring {name} Noise ---")
+
+        mean_img = mean_filter(noisy_img)
+        median_img = median_filter(noisy_img)
+        gaussian_img = gaussian_filter(noisy_img)
+
+        # Save images
+        cv2.imwrite(f"outputs/{name}_mean.png", mean_img)
+        cv2.imwrite(f"outputs/{name}_median.png", median_img)
+        cv2.imwrite(f"outputs/{name}_gaussian.png", gaussian_img)
+
+        # Metrics
+        results[name] = {
+            "Mean": (mse(img, mean_img), psnr(img, mean_img)),
+            "Median": (mse(img, median_img), psnr(img, median_img)),
+            "Gaussian": (mse(img, gaussian_img), psnr(img, gaussian_img))
+        }
+
+    return results
+
+# Analysis
+
+def print_analysis(results):
+    print("\n========== PERFORMANCE ANALYSIS ==========\n")
+
+    for noise_type, filters in results.items():
+        print(f"\nNoise Type: {noise_type}")
+
+        best_psnr = 0
+        best_filter = ""
+
+        for filter_name, (mse_val, psnr_val) in filters.items():
+            print(f"{filter_name} Filter -> MSE: {mse_val:.2f}, PSNR: {psnr_val:.2f}")
+
+            if psnr_val > best_psnr:
+                best_psnr = psnr_val
+                best_filter = filter_name
+
+        print(f"👉 Best Filter: {best_filter}")
+
+
+# MAIN
+
+if __name__ == "__main__":
+    create_output_folder()
+
+    # ✅ YOUR IMAGE NAME FIXED HERE
+    image_path = "image.jpg"
+
+    try:
+        results = process_image(image_path)
+        print_analysis(results)
+        print("\n✔ All outputs saved in 'outputs/' folder")
+
+    except Exception as e:
+        print(e)
