@@ -2,133 +2,113 @@
 Name: YOUR NAME
 Roll No: YOUR ROLL NO
 Course: Image Processing & Computer Vision
-Assignment: Medical Image Compression & Segmentation
+Assignment: Feature-Based Traffic Monitoring System
 """
 
 import cv2
 import numpy as np
 import os
 
-# Utility Functions
+# Utility
 
 def create_output_folder():
     if not os.path.exists("outputs"):
         os.makedirs("outputs")
-        print("✔ 'outputs/' folder created")
+        print("✔ outputs/ folder created")
 
 
 def load_image(path):
     if not os.path.exists(path):
-        raise Exception(f"❌ Image not found at: {path}")
+        raise Exception(" Image not found!")
 
-    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-
+    img = cv2.imread(path)
     if img is None:
-        raise Exception("❌ Error loading image!")
+        raise Exception(" Error loading image!")
 
-    return img
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    return img, gray
 
-# Task 1: RLE Compression
+# Task 1: Edge Detection
 
-def rle_encode(image):
-    pixels = image.flatten()
-    encoding = []
-
-    prev = pixels[0]
-    count = 1
-
-    for pixel in pixels[1:]:
-        if pixel == prev:
-            count += 1
-        else:
-            encoding.append((prev, count))
-            prev = pixel
-            count = 1
-
-    encoding.append((prev, count))
-    return encoding
+def sobel_edges(gray):
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=5)
+    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=5)
+    sobel = cv2.magnitude(sobelx, sobely)
+    sobel = np.uint8(np.clip(sobel, 0, 255))
+    return sobel
 
 
-def compression_stats(original, encoded):
-    original_size = original.size
-    encoded_size = len(encoded) * 2  # (value, count)
+def canny_edges(gray):
+    return cv2.Canny(gray, 100, 200)
 
-    ratio = original_size / encoded_size
-    savings = (1 - encoded_size / original_size) * 100
+# Task 2: Contours & Objects
 
-    return ratio, savings
+def detect_contours(image, edge_img):
+    contours, _ = cv2.findContours(edge_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-# Task 2: Segmentation
+    output = image.copy()
 
-def global_threshold(image):
-    _, thresh = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)
-    return thresh
+    print("\n--- Object Measurements ---")
 
+    for i, cnt in enumerate(contours):
+        area = cv2.contourArea(cnt)
+        perimeter = cv2.arcLength(cnt, True)
 
-def otsu_threshold(image):
-    _, thresh = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return thresh
+        if area > 100:  # filter noise
+            x, y, w, h = cv2.boundingRect(cnt)
+            cv2.rectangle(output, (x, y), (x+w, y+h), (0, 255, 0), 2)
 
-# Task 3: Morphology
+            print(f"Object {i+1}: Area = {area:.2f}, Perimeter = {perimeter:.2f}")
 
-def morphology(image):
-    kernel = np.ones((3, 3), np.uint8)
+    return output
 
-    dilation = cv2.dilate(image, kernel, iterations=1)
-    erosion = cv2.erode(image, kernel, iterations=1)
+# Task 3: Feature Extraction
 
-    return dilation, erosion
+def orb_features(gray, image):
+    orb = cv2.ORB_create()
+    keypoints, descriptors = orb.detectAndCompute(gray, None)
 
-# Main Pipeline
+    output = cv2.drawKeypoints(image, keypoints, None, color=(0,255,0))
+    print(f"\n✔ ORB Keypoints detected: {len(keypoints)}")
 
-def process_image(image_path):
-    print("\n--- Processing Image ---")
+    return output
 
-    img = load_image(image_path)
+# Pipeline
+
+def process_image(path):
+    print("\n--- Processing Traffic Image ---")
+
+    img, gray = load_image(path)
     cv2.imwrite("outputs/original.png", img)
+
     print("✔ Image loaded")
 
-    # ---------- Compression ----------
-    print("\n--- Compression (RLE) ---")
+    # ---------- Edge Detection ----------
+    print("\n--- Edge Detection ---")
 
-    encoded = rle_encode(img)
-    ratio, savings = compression_stats(img, encoded)
+    sobel = sobel_edges(gray)
+    canny = canny_edges(gray)
 
-    print(f"Compression Ratio: {ratio:.2f}")
-    print(f"Storage Savings: {savings:.2f}%")
+    cv2.imwrite("outputs/sobel.png", sobel)
+    cv2.imwrite("outputs/canny.png", canny)
 
-    # Save RLE output (partial for readability)
-    with open("outputs/rle.txt", "w") as f:
-        for val, count in encoded[:1000]:
-            f.write(f"{val}:{count} ")
+    print("✔ Sobel & Canny done")
 
-    print("✔ RLE saved")
+    # ---------- Contours ----------
+    print("\n--- Contour Detection ---")
 
-    # ---------- Segmentation ----------
-    print("\n--- Segmentation ---")
+    contour_img = detect_contours(img, canny)
+    cv2.imwrite("outputs/contours.png", contour_img)
 
-    global_seg = global_threshold(img)
-    otsu_seg = otsu_threshold(img)
+    print("✔ Contours & bounding boxes done")
 
-    cv2.imwrite("outputs/global_threshold.png", global_seg)
-    cv2.imwrite("outputs/otsu_threshold.png", otsu_seg)
+    # ---------- Feature Extraction ----------
+    print("\n--- Feature Extraction (ORB) ---")
 
-    print("✔ Segmentation done")
+    orb_img = orb_features(gray, img)
+    cv2.imwrite("outputs/orb_features.png", orb_img)
 
-    # ---------- Morphology ----------
-    print("\n--- Morphological Processing ---")
-
-    g_dil, g_ero = morphology(global_seg)
-    o_dil, o_ero = morphology(otsu_seg)
-
-    cv2.imwrite("outputs/global_dilation.png", g_dil)
-    cv2.imwrite("outputs/global_erosion.png", g_ero)
-    cv2.imwrite("outputs/otsu_dilation.png", o_dil)
-    cv2.imwrite("outputs/otsu_erosion.png", o_ero)
-
-    print("✔ Morphology done")
-
-    return ratio, savings
+    print("✔ Feature extraction done")
 
 # MAIN
 
@@ -137,17 +117,14 @@ if __name__ == "__main__":
 
     create_output_folder()
 
-    # ✅ IMPORTANT: your image name
+    # 👉 your image name
     image_path = "image.jpg"
 
     try:
-        ratio, savings = process_image(image_path)
+        process_image(image_path)
 
-        print("\n FINAL RESULTS ")
-        print(f"Compression Ratio: {ratio:.2f}")
-        print(f"Storage Savings: {savings:.2f}%")
-
-        print("\n✔ All outputs saved in 'outputs/' folder")
+        print("\n DONE ")
+        print("✔ Outputs saved in 'outputs/' folder")
 
     except Exception as e:
         print(e)
